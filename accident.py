@@ -1,7 +1,7 @@
 import cv2
 import tensorflow as tf
-import argparse
-import numpy as np
+import argparse  # 파이썬 내장함수 parse_args()
+import numpy as np  # numpy라이브러리를 np라는 이름으로 가져옴
 import os
 import pdb
 import time
@@ -17,7 +17,7 @@ default_model_path = './model/demo_model'
 save_path = './model/'
 video_path = './dataset/videos/testing/positive/'
 # batch_number
-train_num = 126
+train_num = 126  # 파일갯수
 test_num = 46
 
 
@@ -25,47 +25,52 @@ test_num = 46
 
 # Parameters
 learning_rate = 0.0001
-n_epochs = 30
-batch_size = 10
+n_epochs = 30  # 전체 데이터셋에 대한 학습의 수
+batch_size = 10  # 한 번에 처리하는 사진의 장 수
 display_step = 10
 
 # Network Parameters
-n_input = 4096 # fc6 or fc7(1*4096)
-n_detection = 20 # number of object of each image (include image features)
-n_hidden = 512 # hidden layer num of LSTM
+n_input = 4096 # fc6 or fc7(1*4096)  # fc7=4039 / 1000=4096
+n_detection = 20 # number of object of each image (include image features)  # 각 이미지 객체 수
+n_hidden = 512 # hidden layer num of LSTM  # LSTM의 은닉층의 수
 n_img_hidden = 256 # embedding image features 
 n_att_hidden = 256 # embedding object features
-n_classes = 2 # has accident or not
+n_classes = 2 # has accident or not  # 사고/아님 클래스 수
 n_frames = 100 # number of frame in each video 
 ##################################################
 
-def parse_args():
+def parse_args():  # ex) cmd창에 명령어를 추가
     """Parse input arguments."""
+	# ArgumentParser함수를 통해 parser를 생성
     parser = argparse.ArgumentParser(description='accident_LSTM')
-    parser.add_argument('--mode',dest = 'mode',help='train or test',default = 'demo')
-    parser.add_argument('--model',dest = 'model',default= default_model_path)
-    parser.add_argument('--gpu',dest = 'gpu',default= '0')
-    args = parser.parse_args()
+	# 입력받고자 하는 인자의 조건을 설정
+    parser.add_argument('--mode',dest = 'mode', help='train or test', default = 'demo')
+    parser.add_argument('--model',dest = 'model', default= default_model_path)
+    parser.add_argument('--gpu',dest = 'gpu', default= '0')
+    args = parser.parse_args()  # 인자들을 파싱하여 args에 저장
 
     return args
 
 
 def build_model():
 
-    # tf Graph input
-    x = tf.placeholder("float", [None, n_frames ,n_detection, n_input])
+    # tf Graph input  # 플레이스홀더 정의
+    x = tf.placeholder("float", [None, n_frames ,n_detection, n_input])  # 차원의 갯수 정해지지 않음
     y = tf.placeholder("float", [None, n_classes])
     keep = tf.placeholder("float",[None])
 
-    # Define weights
-    weights = {
-        'em_obj': tf.Variable(tf.random_normal([n_input,n_att_hidden], mean=0.0, stddev=0.01)),
+    # Define weights  
+	# 가중치  ex) 기울기
+	# random_normal : 랜덤으로 값을 넣어줌 -> 계속 훈련 시킴
+    weights = {  # 딕셔너리 (키:값)
+        'em_obj': tf.Variable(tf.random_normal([n_input,n_att_hidden], mean=0.0, stddev=0.01)),  # 임의의 수로 변수의 값을 설정(2개?)
         'em_img': tf.Variable(tf.random_normal([n_input,n_img_hidden], mean=0.0, stddev=0.01)),
         'att_w': tf.Variable(tf.random_normal([n_att_hidden, 1], mean=0.0, stddev=0.01)),
         'att_wa': tf.Variable(tf.random_normal([n_hidden, n_att_hidden], mean=0.0, stddev=0.01)),
         'att_ua': tf.Variable(tf.random_normal([n_att_hidden, n_att_hidden], mean=0.0, stddev=0.01)),
         'out': tf.Variable(tf.random_normal([n_hidden, n_classes], mean=0.0, stddev=0.01))
     }
+	# 편향, 바이어스  ex) 절편
     biases = {
         'em_obj': tf.Variable(tf.random_normal([n_att_hidden], mean=0.0, stddev=0.01)),
         'em_img': tf.Variable(tf.random_normal([n_img_hidden], mean=0.0, stddev=0.01)),
@@ -81,16 +86,17 @@ def build_model():
     istate = tf.zeros([batch_size, lstm_cell.state_size])
     h_prev = tf.zeros([batch_size, n_hidden])
     # init loss 
-    loss = 0.0  
+    loss = 0.0  # 오차값을 이야기하는 거 같음(?)
     # Mask 
     zeros_object = tf.to_float(tf.not_equal(tf.reduce_sum(tf.transpose(x[:,:,1:n_detection,:],[1,2,0,3]),3),0)) # frame x n x b
+
     # Start creat graph
     for i in range(n_frames):
       with tf.variable_scope('model',reuse=tf.AUTO_REUSE):
         # input features (Faster-RCNN fc7)
         X = tf.transpose(x[:,i,:,:], [1, 0, 2])  # permute n_steps and batch_size (n x b x h)
         # frame embedded
-        image = tf.matmul(X[0,:,:],weights['em_img']) + biases['em_img'] # 1 x b x h
+        image = tf.matmul(X[0,:,:],weights['em_img']) + biases['em_img'] # 1 x b x h  # 행렬곱 적용
         # object embedded
         n_object = tf.reshape(X[1:n_detection,:,:], [-1, n_input]) # (n_steps*batch_size, n_input)
         n_object = tf.matmul(n_object, weights['em_obj']) + biases['em_obj'] # (n x b) x h
@@ -103,7 +109,7 @@ def build_model():
         e = tf.tanh(tf.matmul(h_prev,weights['att_wa'])+image_part) # n x b x h
         # the probability of each object
         alphas = tf.multiply(tf.nn.softmax(tf.reduce_sum(tf.matmul(e,brcst_w),2),0),zeros_object[i])
-        # weighting sum
+        # weighting sum  # 가중합(?)
         attention_list = tf.multiply(tf.expand_dims(alphas,2),n_object)
         attention = tf.reduce_sum(attention_list,0) # b x h
         # concat frame & object
@@ -136,7 +142,7 @@ def build_model():
         loss = tf.add(loss, temp_loss)
         
     # Define loss and optimizer
-    optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss/n_frames) # Adam Optimizer
+    optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss/n_frames) # Adam Optimizer  # 오차값을 줄여나감
 
     return x,keep,y,optimizer,loss,lstm_variables,soft_pred,all_alphas
 
@@ -151,7 +157,7 @@ def train():
     # Initializing the variables
     init = tf.global_variables_initializer()
     # Launch the graph
-    sess.run(init)
+    sess.run(init)  # 변수 초기화(?)
     saver = tf.train.Saver(max_to_keep=100)
     # Keep training until reach max iterations
     # start training
@@ -205,7 +211,7 @@ def test_all(sess,num,path,x,keep,y,loss,lstm_variables,soft_pred):
     evaluation(all_pred,all_labels)
 
     
-def evaluation(all_pred,all_labels, total_time = 90, vis = False, length = None):
+def evaluation(all_pred,all_labels, total_time = 90, vis = False, length = None):  # 모델이 얼마나 정확하게 예측하는 지 점검(?)
     ### input: all_pred (N x total_time) , all_label (N,)
     ### where N = number of videos, fps = 20 , time of accident = total_time
     ### output: AP & Time to Accident
@@ -381,8 +387,9 @@ def test(model_path):
     test_all(sess,test_num,test_path,x,keep,y,loss,lstm_variables,soft_pred)
 
 
-
-if __name__ == '__main__':
+# __name__변수의 값이 __main__인지 확인 -> 현재 스크립트 파일이 프로그램의 시작점이 맞는지 판단
+# __name__변수에는 모듈의 이름 값이 저장됨 (기본 값 = __main__)
+if __name__ == '__main__':  
     args = parse_args()
     if args.gpu:
         os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
